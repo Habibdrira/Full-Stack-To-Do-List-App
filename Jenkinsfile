@@ -2,19 +2,17 @@ pipeline {
     agent any
 
     environment {
-        DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials') // ID Jenkins pour DockerHub
+        DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
         BACKEND_IMAGE = "drirahabib/todo-backend:latest"
         FRONTEND_IMAGE = "drirahabib/todo-frontend:latest"
     }
 
     options {
-        buildDiscarder(logRotator(numToKeepStr: '10')) // Garde seulement 10 builds
-        timestamps() // Ajoute des timestamps dans les logs
-        ansiColor('xterm') // Couleurs dans les logs
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timestamps() // Garde les timestamps dans les logs
     }
 
     stages {
-
         stage('Checkout SCM') {
             steps {
                 echo "📥 Cloning repository..."
@@ -36,7 +34,7 @@ pipeline {
             steps {
                 echo "🛠 Building Angular frontend..."
                 dir('To-Do-List-App-Angular') {
-                    sh 'npm ci'  // Utilise ci pour reproducibilité
+                    sh 'npm ci'
                     sh 'npm run build -- --prod'
                     archiveArtifacts artifacts: 'dist/**/*', fingerprint: true
                 }
@@ -95,7 +93,7 @@ pipeline {
             echo "❌ Pipeline failed! Check logs for details."
         }
         always {
-            cleanWs() // Nettoie le workspace à la fin
+            cleanWs()
         }
     }
 }
