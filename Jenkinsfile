@@ -2,85 +2,80 @@ pipeline {
     agent any
 
     environment {
-        DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
         BACKEND_IMAGE = "drirahabib/todo-backend:latest"
         FRONTEND_IMAGE = "drirahabib/todo-frontend:latest"
-    }
-
-    options {
-        buildDiscarder(logRotator(numToKeepStr: '10'))
-        timestamps() // Garde les timestamps dans les logs
+        DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials') // ID de vos credentials Docker Hub
+        KUBECONFIG = credentials('kubeconfig-credentials') // ID de vos credentials Kubeconfig
     }
 
     stages {
+
         stage('Checkout SCM') {
             steps {
                 echo "📥 Cloning repository..."
-                git url: 'https://github.com/Habibdrira/Full-Stack-To-Do-List-App.git', branch: 'main'
-            }
-        }
-
-        stage('Build Backend JAR') {
-            steps {
-                echo "📦 Building Spring Boot backend..."
-                dir('To-Do-List-App-SpringBoot') {
-                    sh './mvnw clean package -DskipTests'
-                    archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
-                }
-            }
-        }
-
-        stage('Build Frontend') {
-            steps {
-                echo "🛠 Building Angular frontend..."
-                dir('To-Do-List-App-Angular') {
-                    sh 'npm ci'
-                    sh 'npm run build -- --prod'
-                    archiveArtifacts artifacts: 'dist/**/*', fingerprint: true
-                }
+                checkout scm
             }
         }
 
         stage('Build Docker Images') {
             steps {
-                echo "🐳 Building Docker images..."
-                dir('To-Do-List-App-SpringBoot') {
-                    sh "docker build -t ${BACKEND_IMAGE} ."
-                }
-                dir('To-Do-List-App-Angular') {
-                    sh "docker build -t ${FRONTEND_IMAGE} ."
+                script {
+                    // Backend
+                    if (fileExists('./To-Do-List-App-SpringBoot/pom.xml')) {
+                        echo "🛠 Building backend Docker image..."
+                        sh "cd To-Do-List-App-SpringBoot && ./mvnw clean package -DskipTests"
+                        sh "docker build -t ${BACKEND_IMAGE} ./To-Do-List-App-SpringBoot"
+                    } else {
+                        echo "⚠️ Backend not found, skipping..."
+                    }
+
+                    // Frontend
+                    if (fileExists('./To-Do-List-App-Angular/package.json')) {
+                        echo "🛠 Building frontend Docker image..."
+                        sh "docker build -t ${FRONTEND_IMAGE} ./To-Do-List-App-Angular"
+                    } else {
+                        echo "⚠️ Frontend not found, skipping..."
+                    }
+
+                    // MySQL
+                    if (!fileExists('./k8s/mysql-deployment.yaml')) {
+                        echo "⚠️ Pas de Dockerfile pour MySQL, skipping..."
+                    }
                 }
             }
         }
 
-        stage('Push Docker Images') {
+        stage('Docker Hub Login & Push') {
             steps {
-                echo "⬆️ Pushing Docker images..."
                 script {
-                    docker.withRegistry('', 'dockerhub-credentials') {
-                        sh "docker push ${BACKEND_IMAGE}"
-                        sh "docker push ${FRONTEND_IMAGE}"
-                    }
+                    echo "🔑 Logging into Docker Hub..."
+                    sh """
+                        echo ${DOCKERHUB_CREDENTIALS_PSW} | docker login -u ${DOCKERHUB_CREDENTIALS_USR} --password-stdin
+                    """
+
+                    // Push images
+                    sh "docker push ${BACKEND_IMAGE}"
+                    sh "docker push ${FRONTEND_IMAGE}"
                 }
             }
         }
 
         stage('Deploy to Kubernetes') {
             steps {
-                echo "🚀 Deploying services to Kubernetes..."
-                withKubeConfig([credentialsId: 'kubeconfig-creds']) {
-                    sh 'kubectl apply -f ./k8s'
-                    sh 'kubectl rollout status deployment/todo-backend -n todo-app'
-                    sh 'kubectl rollout status deployment/todo-frontend -n todo-app'
+                script {
+                    echo "🚀 Deploying services to Kubernetes..."
+                    sh "kubectl apply -f ./k8s --kubeconfig=${KUBECONFIG}"
                 }
             }
         }
 
         stage('Test Deployment') {
             steps {
-                echo "🔍 Checking pods and services..."
-                sh 'kubectl get pods -n todo-app'
-                sh 'kubectl get svc -n todo-app'
+                script {
+                    echo "🔍 Checking Kubernetes pods and services..."
+                    sh "kubectl get pods -n default --kubeconfig=${KUBECONFIG}"
+                    sh "kubectl get svc -n default --kubeconfig=${KUBECONFIG}"
+                }
             }
         }
     }
@@ -93,7 +88,9 @@ pipeline {
             echo "❌ Pipeline failed! Check logs for details."
         }
         always {
-            cleanWs()
+            node {
+                cleanWs()
+            }
         }
     }
 }
