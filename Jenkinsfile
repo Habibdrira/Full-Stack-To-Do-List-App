@@ -10,14 +10,13 @@ pipeline {
 
     options {
         skipDefaultCheckout(true)
-        timeout(time: 60, unit: 'MINUTES') // Timeout global pour la pipeline
+        timeout(time: 60, unit: 'MINUTES')
     }
 
     stages {
 
         stage('Checkout SCM') {
             steps {
-                echo "📥 Cloning repository..."
                 checkout scm
             }
         }
@@ -25,62 +24,67 @@ pipeline {
         stage('Build Backend Docker Image') {
             when { expression { fileExists('./To-Do-List-App-SpringBoot/pom.xml') } }
             steps {
-                echo "🛠 Building backend Docker image..."
-                sh """
-                    cd To-Do-List-App-SpringBoot
-                    ./mvnw clean package -DskipTests
-                    docker build -t ${BACKEND_IMAGE} .
-                """
+                node {
+                    sh """
+                        cd To-Do-List-App-SpringBoot
+                        ./mvnw clean package -DskipTests
+                        docker build -t ${BACKEND_IMAGE} .
+                    """
+                }
             }
         }
 
         stage('Build Frontend Docker Image') {
             when { expression { fileExists('./To-Do-List-App-Angular/package.json') } }
             steps {
-                echo "🛠 Building frontend Docker image..."
-                sh "docker build -t ${FRONTEND_IMAGE} ./To-Do-List-App-Angular"
+                node {
+                    sh "docker build -t ${FRONTEND_IMAGE} ./To-Do-List-App-Angular"
+                }
             }
         }
 
         stage('Docker Hub Login & Push') {
             steps {
-                script {
-                    echo "🔑 Logging into Docker Hub..."
+                node {
                     sh """
                         echo ${DOCKERHUB_CREDENTIALS_PSW} | docker login -u ${DOCKERHUB_CREDENTIALS_USR} --password-stdin
+                        docker push ${BACKEND_IMAGE}
+                        docker push ${FRONTEND_IMAGE}
                     """
-                    sh "docker push ${BACKEND_IMAGE}"
-                    sh "docker push ${FRONTEND_IMAGE}"
                 }
             }
         }
 
         stage('Deploy to Kubernetes') {
             steps {
-                echo "🚀 Deploying services to Kubernetes..."
-                sh "kubectl apply -f ./k8s --kubeconfig=${KUBECONFIG}"
+                node {
+                    sh "kubectl apply -f ./k8s --kubeconfig=${KUBECONFIG}"
+                }
             }
         }
 
         stage('Test Deployment') {
             steps {
-                echo "🔍 Checking Kubernetes pods and services..."
-                sh "kubectl get pods -n default --kubeconfig=${KUBECONFIG}"
-                sh "kubectl get svc -n default --kubeconfig=${KUBECONFIG}"
+                node {
+                    sh "kubectl get pods -n default --kubeconfig=${KUBECONFIG}"
+                    sh "kubectl get svc -n default --kubeconfig=${KUBECONFIG}"
+                }
             }
         }
     }
 
     post {
         success {
-            echo "🎉 CI/CD pipeline completed successfully!"
+            node { echo "🎉 Pipeline completed successfully!" }
         }
         failure {
-            echo "❌ Pipeline failed! Check logs for details."
+            node { echo "❌ Pipeline failed!" }
         }
         always {
-            echo "🧹 Cleaning workspace..."
-            cleanWs()
+            node { 
+                echo "🧹 Cleaning workspace..."
+                cleanWs()
+            }
         }
     }
 }
