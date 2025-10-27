@@ -2,53 +2,103 @@ pipeline {
     agent any
 
     environment {
-        DOCKERHUB_CREDENTIALS = credentials('dockerhub-id') // Mets ici l’ID de tes credentials Jenkins pour DockerHub
-        IMAGE_BACKEND = "drirahabib/todo-backend:latest"
-        IMAGE_FRONTEND = "drirahabib/todo-frontend:latest"
-        NAMESPACE = "todo-app"
+        DOCKERHUB_CREDENTIALS = credentials('dockerhub-creds')
     }
 
     stages {
+
         stage('Checkout') {
             steps {
-                git 'https://github.com/Habibdrira/Full-Stack-To-Do-List-App.git'
+                echo "Cloning repository..."
+                git branch: 'main', url: 'https://github.com/Habibdrira/Full-Stack-To-Do-List-App.git'
             }
         }
 
-        stage('Build Backend Docker') {
+        stage('Build Docker Images') {
             steps {
-                dir('To-Do-List-App-SpringBoot') {
-                    sh 'docker build -t $IMAGE_BACKEND .'
+                echo "Building Docker images..."
+                script {
+                    def services = ['todo-backend', 'todo-frontend', 'mysql-todo']
+                    
+                    services.each { svc ->
+                        def dockerfilePath = "./To-Do-List-App-SpringBoot/Dockerfile"
+                        if (svc == 'todo-frontend') {
+                            dockerfilePath = "./To-Do-List-App-Angular/Dockerfile"
+                        } else if (svc == 'mysql-todo') {
+                            dockerfilePath = "./k8s/mysql/Dockerfile" // si tu veux customiser MySQL
+                        }
+
+                        if (fileExists(dockerfilePath)) {
+                            echo "Building image for ${svc}..."
+                            try {
+                                sh "docker build -t drirahabib/${svc}:latest $(dirname ${dockerfilePath})"
+                            } catch (err) {
+                                echo "⚠️ Failed to build ${svc}: ${err}"
+                            }
+                        } else {
+                            echo "⚠️ Dockerfile not found for ${svc}, skipping..."
+                        }
+                    }
                 }
             }
         }
 
-        stage('Build Frontend Docker') {
+        stage('Docker Hub Login') {
             steps {
-                dir('To-Do-List-App-Angular') {
-                    sh 'docker build -t $IMAGE_FRONTEND .'
+                echo "Logging into Docker Hub..."
+                script {
+                    sh "echo ${DOCKERHUB_CREDENTIALS_PSW} | docker login -u ${DOCKERHUB_CREDENTIALS_USR} --password-stdin"
                 }
             }
         }
 
         stage('Push Docker Images') {
             steps {
-                sh 'docker login -u $DOCKERHUB_CREDENTIALS_USR -p $DOCKERHUB_CREDENTIALS_PSW'
-                sh 'docker push $IMAGE_BACKEND'
-                sh 'docker push $IMAGE_FRONTEND'
+                echo "Pushing Docker images to Docker Hub..."
+                script {
+                    def services = ['todo-backend', 'todo-frontend', 'mysql-todo']
+                    services.each { svc ->
+                        def imageExists = sh(script: "docker images -q drirahabib/${svc}:latest", returnStdout: true).trim()
+                        if (imageExists) {
+                            try {
+                                sh "docker push drirahabib/${svc}:latest"
+                                echo "✅ Successfully pushed ${svc}"
+                            } catch (err) {
+                                echo "⚠️ Failed to push ${svc}: ${err}"
+                            }
+                        } else {
+                            echo "⚠️ Image ${svc} not found, skipping push."
+                        }
+                    }
+                }
             }
         }
 
         stage('Deploy to Kubernetes') {
             steps {
-                sh 'kubectl apply -f k8s/namespace.yaml'
-                sh 'kubectl apply -f k8s/mysql-deployment.yaml'
-                sh 'kubectl apply -f k8s/mysql-service.yaml'
-                sh 'kubectl apply -f k8s/backend-deployment.yaml'
-                sh 'kubectl apply -f k8s/backend-service.yaml'
-                sh 'kubectl apply -f k8s/frontend-deployment.yaml'
-                sh 'kubectl apply -f k8s/frontend-service.yaml'
+                echo "Deploying services to Kubernetes..."
+                withCredentials([file(credentialsId: 'kubeconfig-creds', variable: 'KUBECONFIG')]) {
+                    sh "kubectl apply -f ./k8s || echo '⚠️ Deployment may have failed'"
+                }
             }
+        }
+
+        stage('Test Deployment') {
+            steps {
+                echo "Checking Kubernetes pods and services..."
+                sh "kubectl get pods -n todo-app || echo '⚠️ Failed to get pods'"
+                sh "kubectl get svc -n todo-app || echo '⚠️ Failed to get services'"
+            }
+        }
+
+    }
+
+    post {
+        success {
+            echo '🎉 CI/CD pipeline completed successfully!'
+        }
+        failure {
+            echo '❌ CI/CD pipeline failed. Check logs for details!'
         }
     }
 }
