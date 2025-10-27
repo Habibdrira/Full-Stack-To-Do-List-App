@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: todo-backend
+  namespace: todo-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: todo-backend
+  template:
+    metadata:
+      labels:
+        app: todo-backend
+    spec:
+      initContainers:
+      - name: wait-for-mysql
+        image: busybox
+        command: ['sh', '-c', 'until nc -z mysql-todo 3306; do echo waiting for mysql; sleep 5; done;']
+      containers:
+      - name: todo-backend
+        image: drirahabib/todo-backend:latest
+        ports:
+        - containerPort: 8080
+        env:
+          - name: SPRING_PROFILES_ACTIVE
+            value: "prod"
+          - name: DB_URL
+            value: jdbc:mysql://mysql-todo:3306/tododb?useSSL=false&allowPublicKeyRetrieval=true
+          - name: DB_USERNAME
+            value: todo
+          - name: DB_PASSWORD
+            value: todopass
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 20
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8080
+          initialDelaySeconds: 45
+          periodSeconds: 15
+          failureThreshold: 3
