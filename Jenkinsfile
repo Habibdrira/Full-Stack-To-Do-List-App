@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        DOCKERHUB_CREDENTIALS = credentials('dockerhub-creds') // ton ID Jenkins pour Docker Hub
+        DOCKERHUB_CREDENTIALS = credentials('dockerhub-creds')
     }
 
     stages {
@@ -18,16 +18,27 @@ pipeline {
             steps {
                 echo "🛠 Building Docker images..."
                 script {
-                    // Liste des services à builder
-                    def services = ['todo-backend','todo-frontend','mysql-todo']
-
+                    def services = [
+                        'todo-backend', 'todo-frontend', 'mysql-todo'
+                    ]
+                    
                     services.each { svc ->
-                        def dockerfilePath = "./k8s/${svc}-Dockerfile"
-                        def buildDir = "./"  // ton chemin par défaut, adapter si nécessaire
+                        def dockerfilePath = "./To-Do-List-App-SpringBoot/Dockerfile"
+                        if (svc == 'todo-frontend') {
+                            dockerfilePath = "./To-Do-List-App-Angular/Dockerfile"
+                        } else if (svc == 'mysql-todo') {
+                            dockerfilePath = "./k8s/mysql-deployment.yaml" // juste placeholder, tu n’as pas de Dockerfile pour MySQL
+                        }
+                        
                         if (fileExists(dockerfilePath)) {
-                            echo "🔹 Building image for ${svc}..."
+                            echo "Building image for ${svc}..."
                             try {
-                                sh "docker build -t drirahabib/${svc}:latest ${buildDir}"
+                                if (svc != 'mysql-todo') {
+                                    def buildPath = svc == 'todo-backend' ? './To-Do-List-App-SpringBoot' : './To-Do-List-App-Angular'
+                                    sh "docker build -t drirahabib/${svc}:latest ${buildPath}"
+                                } else {
+                                    echo "⚠️ Pas de Dockerfile pour ${svc}, skipping build..."
+                                }
                             } catch (err) {
                                 echo "⚠️ Failed to build ${svc}: ${err}"
                             }
@@ -52,8 +63,8 @@ pipeline {
             steps {
                 echo "📤 Pushing Docker images to Docker Hub..."
                 script {
-                    def services = ['todo-backend','todo-frontend','mysql-todo']
-
+                    def services = ['todo-backend', 'todo-frontend']
+                    
                     services.each { svc ->
                         def imageExists = sh(script: "docker images -q drirahabib/${svc}:latest", returnStdout: true).trim()
                         if (imageExists) {
@@ -75,15 +86,7 @@ pipeline {
             steps {
                 echo "🚀 Deploying services to Kubernetes..."
                 withCredentials([file(credentialsId: 'kubeconfig-creds', variable: 'KUBECONFIG')]) {
-                    sh '''
-                        kubectl apply -f ./k8s/namespace.yaml
-                        kubectl apply -f ./k8s/mysql-deployment.yaml
-                        kubectl apply -f ./k8s/mysql-service.yaml
-                        kubectl apply -f ./k8s/backend-deployment.yaml
-                        kubectl apply -f ./k8s/backend-service.yaml
-                        kubectl apply -f ./k8s/frontend-deployment.yaml
-                        kubectl apply -f ./k8s/frontend-service.yaml
-                    '''
+                    sh "kubectl apply -f ./k8s"
                 }
             }
         }
@@ -91,8 +94,8 @@ pipeline {
         stage('Test Deployment') {
             steps {
                 echo "🔍 Checking Kubernetes pods and services..."
-                sh "kubectl get pods -n todo-app || echo '⚠️ Failed to get pods'"
-                sh "kubectl get svc -n todo-app || echo '⚠️ Failed to get services'"
+                sh "kubectl get pods -n default || echo '⚠️ Failed to get pods'"
+                sh "kubectl get svc -n default || echo '⚠️ Failed to get services'"
             }
         }
 
